@@ -1,0 +1,124 @@
+
+
+with
+  downloders as (
+    select
+      app_download_key, -- effectively a user_id
+      min(download_ts) as min_time,platform,cast(download_ts as DATE) as download_date
+      -- gets the earliest Visit for each person
+    from
+      app_downloads
+    group by
+      1,3 -- selects people whose first visit is in this time range
+  ),
+  -- SIGN-UPS (FROM THE VISITORS ABOVE)
+  sign_ups as (
+    select distinct
+      e.user_id ,v.platform as plat,e.age_range as ager,v.download_date as datedown
+    from
+      downloders v -- ensures we only look at the Visitors defined above
+      inner join signups e on e.session_id = v.app_download_key
+    
+      -- an internal event that defines sign-up
+  ),
+  -- ACTIVATIONS (FROM THE SIGN-UPS ABOVE)
+  requestride as (
+    select
+      w.user_id,s.plat as pl,s.ager as ages,s.datedown as downdate
+    from
+      sign_ups s -- ensures we only look at the Signups defined above
+      inner join ride_requests w on w.user_id = s.user_id
+  ),
+  requestrideaceepted as (
+    select
+      w.user_id,s.plat as pl,s.ager as ages,s.datedown as downdate
+    from
+      sign_ups s
+      inner join ride_requests w on w.user_id = s.user_id
+    where
+      w.accept_ts is not null
+  ),
+  requestridecompleted as (
+    select
+      w.user_id,s.plat as pl,s.ager as ages,s.datedown as downdate
+    from
+      sign_ups s
+      inner join ride_requests w on w.user_id = s.user_id
+    where
+      w.dropoff_ts is not null
+  ),
+  steps as (
+    select
+      0 as funnel_step,
+      'download' as funnel_name,
+      COUNT(*) user_count,
+      CAST(NULL as BIGINT) ride_count,
+      platform as platform_name,
+      CAST(NULL as text) age_ranges,
+      download_date as datedownload
+      
+      
+    from 
+      downloders 
+    group by platform_name,6,7
+    
+    union -- joins the output of queries together (as long as they have the same columns)
+    select
+      1 as funnel_step,
+      'Sign Up' as funnel_name,
+      COUNT(*) user_count,
+      CAST(NULL as BIGINT) ride_count ,
+      plat as platform_name,
+      ager as age_ranges,
+      datedown as datedownload
+    from sign_ups
+    group by platform_name,6,7
+    union
+    select
+      2 as funnel_step,
+      'requestride' as funnel_name,
+      COUNT(distinct user_id) user_count,
+      count(*) ride_count,
+      pl as platform_name,
+      ages as age_ranges,
+      downdate as datedownload
+    from
+      requestride
+    group by platform_name,6,7
+    union
+    select
+      3 as funnel_step,
+      'Accepted' as funnel_name,
+      COUNT(distinct user_id) user_count,
+      count(*) ride_count,
+      pl as platform_name,
+      ages as age_ranges,
+      downdate as datedownload
+    from
+      requestrideaceepted
+    group by platform_name,6,7
+    union
+    select
+      4 as funnel_step,
+      'completed' as funnel_name,
+      COUNT(distinct user_id) user_count,
+      count(*) ride_count,
+      pl as platform_name,
+      ages as age_ranges,
+      downdate as datedownload
+    from
+      requestridecompleted
+    group by platform_name,6,7
+    order by
+      user_count desc
+  ) -- applies to the whole result set
+select
+  funnel_step,
+  funnel_name,
+  user_count,
+  ride_count,
+  platform_name,
+  age_ranges,
+  datedownload
+from
+  steps;
